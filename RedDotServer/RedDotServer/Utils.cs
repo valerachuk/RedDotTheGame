@@ -57,7 +57,7 @@ namespace RedDotServer
       var bytesWithMeta = BitConverter.GetBytes(bytes.Length).Concat(bytes).ToArray();
 
       var stream = client.GetStream();
-      stream.WriteAsync(bytesWithMeta, 0, bytesWithMeta.Length);
+      stream.Write(bytesWithMeta, 0, bytesWithMeta.Length);
     }
   }
 }

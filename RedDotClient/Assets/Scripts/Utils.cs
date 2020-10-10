@@ -8,7 +8,6 @@ using UnityEngine;
 
 public static class Utils
 {
-
   public static T AcceptJsonBinaryObject<T>(this TcpClient client)
   {
     var networkStream = client.GetStream();

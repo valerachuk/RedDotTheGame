@@ -6,70 +6,26 @@ using System.Net.Sockets;
 using System.Threading;
 using RedDotServer.Models;
 
+
 namespace RedDotServer
 {
   class RedDotTcpServer
   {
-    private List<GamePoint> _gameField = new List<GamePoint>();
-    private List<ClientInfo> _clients = new List<ClientInfo>();
-    private Random _rnd = new Random();
+    private readonly List<ClientInfo> _clients = new List<ClientInfo>();
     private TcpListener _tcpListener = null;
 
-    private int _matchCount = 3;
-    private int MatchCount
-    {
-      get => _matchCount;
-      set
-      {
-        if (value > 0)
-        {
-          _matchCount = value;
-        }
-      }
-    }
+    private readonly object _timerLock = new object();
 
-    private int _matchTime = 40;
-    private int MatchTime
-    {
-      get => _matchTime;
-      set
-      {
-        if (value >= 30)
-        {
-          _matchTime = value;
-        }
-      }
-    }
+    private RedDotGameSession _gameSession = new RedDotGameSession();
 
-    //private void StartGenerationPoints()
-    //{
-    //  while (true)
-    //  {
-    //    Thread.Sleep(_rnd.Next(Constants.SPAWN_POINT_DELAY_MIN, Constants.SPAWN_POINT_DELAY_MAX));
-    //    _gameField.Add(new GamePoint
-    //    {
-    //      X = (float)_rnd.NextDouble(),
-    //      Y = (float)_rnd.NextDouble(),
-    //      IsRed = _rnd.Next(0, 100) > 50
-    //    });
-    //  }
-    //}
-
-    //private void FlushDisconnected()
-    //{
-    //  lock (_clients)
-    //  {
-    //    var toDisconnect = _clients.Where(client => !client.TcpClient.Connected).ToList();
-    //    toDisconnect.ForEach(client => client.TcpClient.Dispose());
-    //    Console.WriteLine($"Disconnecting: {toDisconnect.Count}");
-    //    _clients.RemoveAll(client => toDisconnect.Contains(client));
-    //  }
-    //}
+    private Timer _dotFlushTimer;
+    private Timer _countdownTimer;
+    private Timer _spawnPointTimer;
+    private Timer _acceptClientsTimer;
 
     private void AcceptClient()
     {
       if (!_tcpListener.Pending()) return;
-      lock (_clients)
       {
         var client = _tcpListener.AcceptTcpClient();
         Console.WriteLine($"Accepting client: {client.Client.RemoteEndPoint}");
@@ -82,39 +38,44 @@ namespace RedDotServer
 
     private void ListenClients()
     {
-      lock (_clients)
-      {
-        _clients
-          .Where(client => client.TcpClient.Available > 0)
-          .ToList()
-          .ForEach(clientInfo => ProcessCommand(clientInfo, clientInfo.TcpClient.AcceptJsonBinaryObject<InputCommand>()));
-      }
+      _clients
+        .Where(client => client.TcpClient.Available > 0)
+        .ToList()
+        .ForEach(clientInfo => ProcessCommand(clientInfo, clientInfo.TcpClient.AcceptJsonBinaryObject<InputCommand>()));
     }
 
     private void WriteAll<T>(T obj)
     {
-      lock (_clients)
+      if (!_clients.Any()) return;
+
+      var toDisconnect = new List<ClientInfo>();
+      _clients.ForEach(client =>
       {
-        var toDisconnect = new List<ClientInfo>();
-        _clients.ForEach(client =>
+        try
         {
-          try
-          {
-            client.TcpClient.WriteJsonBinaryObject(obj);
-          }
-          catch
-          {
-            Console.WriteLine($"Disconnecting: {client.TcpClient.Client.RemoteEndPoint} - {client.Name}");
-            toDisconnect.Add(client);
-          }
-        });
-        _clients.RemoveAll(client => toDisconnect.Contains(client));
-        toDisconnect.ForEach(client => client.TcpClient.Dispose());
-        if (toDisconnect.Any())
-        {
-          RefreshRoomMembers();
+          client.TcpClient.WriteJsonBinaryObject(obj);
         }
+        catch
+        {
+          Console.WriteLine($"Disconnecting: {client.TcpClient.Client.RemoteEndPoint} - {client.Name}");
+          toDisconnect.Add(client);
+        }
+      });
+
+      _clients.RemoveAll(client => toDisconnect.Contains(client));
+      toDisconnect.ForEach(client => client.TcpClient.Dispose());
+      if (!_clients.Any())
+      {
+        GameOver();
+        return;
       }
+
+      if (toDisconnect.Any())
+      {
+        SendScoreboard();
+        SendRoomMembers();
+      }
+
     }
 
     private void ProcessCommand(ClientInfo clientInfo, InputCommand command)
@@ -122,68 +83,155 @@ namespace RedDotServer
       switch (command.Action)
       {
         case "Register":
-          Register(clientInfo, command);
+          Register(clientInfo, command.Payload.GetString());
           break;
         case "IncrementMatches":
-          MatchCount += command.Payload.GetInt32();
-          UpdateMatchesCount();
+          _gameSession.MatchCount += command.Payload.GetInt32();
+          SendMatchesCount();
           break;
         case "IncrementMatchTime":
-          MatchTime += command.Payload.GetInt32();
-          UpdateMatchTime();
+          _gameSession.MatchDuration += command.Payload.GetInt32();
+          SendMatchTime();
           break;
         case "Disconnect":
           Disconnect(clientInfo);
           break;
+        case "StartGame":
+          StartGame();
+          break;
+        case "TouchDot":
+          TouchDot(clientInfo, command.Payload.GetInt64());
+          break;
+        default:
+          throw new Exception("Unknown command");
       }
     }
 
-    private void Register(ClientInfo clientInfo, InputCommand command)
+    private void Register(ClientInfo clientInfo, string stringArg)
     {
-      clientInfo.Name = command.Payload.GetString();
+      clientInfo.Name = stringArg;
       Console.WriteLine($"Registering {clientInfo.TcpClient.Client.RemoteEndPoint} - {clientInfo.Name}");
-      RefreshRoomMembers();
-      UpdateMatchTime();
-      UpdateMatchesCount();
+      SendRoomMembers();
+      SendMatchTime();
+      SendMatchesCount();
     }
 
-    private void RefreshRoomMembers()
+    private void StartGame()
     {
-      lock (_clients)
-      {
-        WriteAll(new OutputCommand
-        {
-          Action = "RefreshRoomMembers",
-          Payload = _clients.Any() ? _clients.Select(client => client.Name).Aggregate((acc, x) => $"{acc}\n{x}") : ""
-        });
-      }
+      _acceptClientsTimer.Change(Timeout.Infinite, Timeout.Infinite);
+
+      WriteAll(new OutputCommand { Action = "OpenGame" });
+      _gameSession.CommitSettings();
+      _gameSession.StartMatch();
+
+      SendGameTimeLeft();
+      SendMatchesLeft();
+      SendScoreboard();
+
+      _countdownTimer.Change(0, 1000);
+      _dotFlushTimer.Change(0, Constants.DOT_FLUSH_DELAY);
+      _spawnPointTimer.Change(0, _gameSession.ComputePointSpawnDelay());
     }
 
-    private void UpdateMatchesCount()
+    private void GameOver()
+    {
+      _countdownTimer.Change(Timeout.Infinite, Timeout.Infinite);
+      _dotFlushTimer.Change(Timeout.Infinite, Timeout.Infinite);
+      _spawnPointTimer.Change(Timeout.Infinite, Timeout.Infinite);
+
+      WriteAll(new OutputCommand { Action = "GameOver" });
+
+      _clients.ForEach(cl => cl.TcpClient.Dispose());
+      _clients.Clear();
+      _gameSession = new RedDotGameSession();
+      _acceptClientsTimer.Change(0, Constants.TCP_CLIENT_ACCEPT_DELAY);
+
+      Console.WriteLine("GameOver");
+    }
+
+    private void TouchDot(ClientInfo client, long id)
+    {
+      var reward = _gameSession.RewardPoint(id);
+      if (reward != 0)
+      {
+        client.Score += reward;
+        SendScoreboard();
+      }
+      SendBoard();
+    }
+
+    private void SendBoard()
+    {
+      WriteAll(new OutputCommand
+      {
+        Action = "UpdateBoard",
+        Payload = _gameSession.GameField
+      });
+    }
+
+    private void SendScoreboard()
+    {
+      WriteAll(new OutputCommand
+      {
+        Action = "UpdateScoreboard",
+        Payload = _clients.Any() ?
+          _clients
+            .OrderByDescending(x => x.Score)
+            .Select(x => $"{x.Name} - {x.Score}")
+            .Aggregate((acc, x) => $"{acc}\n{x}") :
+            ""
+      });
+    }
+
+    private void SendGameTimeLeft()
+    {
+      WriteAll(new OutputCommand
+      {
+        Action = "UpdateTimerCountdown",
+        Payload = _gameSession.MatchTimeLeft
+      });
+    }
+
+    private void SendMatchesLeft()
+    {
+      WriteAll(new OutputCommand
+      {
+        Action = "UpdateGameCountdown",
+        Payload = _gameSession.MatchesLeft
+      });
+    }
+
+    private void SendRoomMembers()
+    {
+      WriteAll(new OutputCommand
+      {
+        Action = "RefreshRoomMembers",
+        Payload = _clients.Any() ? _clients.Select(client => client.Name).Aggregate((acc, x) => $"{acc}\n{x}") : ""
+      });
+    }
+
+    private void SendMatchesCount()
     {
       WriteAll(new OutputCommand
       {
         Action = "UpdateMatchesCount",
-        Payload = MatchCount
+        Payload = _gameSession.MatchCount
       });
     }
 
-    private void UpdateMatchTime()
+    private void SendMatchTime()
     {
       WriteAll(new OutputCommand
       {
         Action = "UpdateMatchTime",
-        Payload = MatchTime
+        Payload = _gameSession.MatchDuration
       });
     }
 
     private void Disconnect(ClientInfo clientInfo)
     {
-      lock (_clients)
-      {
-        _clients.Remove(clientInfo);
-      }
-      RefreshRoomMembers();
+      _clients.Remove(clientInfo);
+      SendRoomMembers();
     }
 
     public void Start()
@@ -193,11 +241,65 @@ namespace RedDotServer
 
       Console.WriteLine($"Server started at {_tcpListener.Server.LocalEndPoint}");
 
-      var acceptClientsTimer = new Timer(s => AcceptClient(), null, 0, Constants.TCP_CLIENT_ACCEPT_DELAY);
-      var listenClientsTimer = new Timer(s => ListenClients(), null, 0, Constants.TCP_CLIENT_LISTEN_DELAY);
-      //var flushClientsTimer = new Timer(s => FlushDisconnected(), null, 0, Constants.TCP_CLIENT_FLUSH_DELAY);
+      var listenClientsTimer = new Timer(s =>
+      {
+        lock (_timerLock) { ListenClients(); }
+      }, null, 0, Constants.TCP_CLIENT_LISTEN_DELAY);
+      _acceptClientsTimer = new Timer(s =>
+      {
+        lock (_timerLock) { AcceptClient(); }
+      }, null, 0, Constants.TCP_CLIENT_ACCEPT_DELAY);
+      _dotFlushTimer = new Timer(s =>
+      {
+        lock (_timerLock) { FlushPoints(); }
+      });
+      _spawnPointTimer = new Timer(s =>
+      {
+        lock (_timerLock) { SpawnPoint(); }
+      });
+      _countdownTimer = new Timer(s =>
+      {
+        lock (_timerLock) { GameCountdown(); }
+      });
 
       Thread.Sleep(Timeout.Infinite);
+    }
+
+    private void GameCountdown()
+    {
+      var isPositive = _gameSession.DecrementTime();
+      if (!isPositive)
+      {
+        if (_gameSession.StartMatch())
+        {
+          _spawnPointTimer.Change(0, _gameSession.ComputePointSpawnDelay());
+          SendMatchesLeft();
+          SendBoard();
+        }
+        else
+        {
+          GameOver();
+          return;
+        }
+      }
+
+      SendGameTimeLeft();
+    }
+
+    private void FlushPoints()
+    {
+      if (_gameSession.DeleteOldPoints())
+      {
+        SendBoard();
+      }
+    }
+
+    private void SpawnPoint()
+    {
+      if (_gameSession.SpawnPoint())
+      {
+        SendBoard();
+      }
     }
 
     ~RedDotTcpServer()

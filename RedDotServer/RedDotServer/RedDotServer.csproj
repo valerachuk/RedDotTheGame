@@ -75,10 +75,11 @@
     <Compile Include="Models\ClientInfo.cs" />
     <Compile Include="Constants.cs" />
     <Compile Include="Models\InputCommand.cs" />
-    <Compile Include="Models\GamePoint.cs" />
+    <Compile Include="Models\Dot.cs" />
     <Compile Include="Models\OutputCommand.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RedDotGameSession.cs" />
     <Compile Include="RedDotTcpServer.cs" />
     <Compile Include="Utils.cs" />
   </ItemGroup>

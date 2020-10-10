@@ -12,6 +12,5 @@ namespace RedDotServer
     public TcpClient TcpClient { get; set; }
     public string Name { get; set; }
     public int Score { get; set; }
-    public int TotalScore { get; set; }
   }
 }
