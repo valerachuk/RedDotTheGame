@@ -25,7 +25,7 @@ namespace RedDotServer
     public static T AcceptJsonBinaryObject<T>(this TcpClient client)
     {
       var networkStream = client.GetStream();
-      int packageSize = 0;
+      int packageSize;
 
       using (var memoryStream = new MemoryStream())
       {

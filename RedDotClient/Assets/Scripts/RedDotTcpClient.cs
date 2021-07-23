@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using Assets.Scripts.Models;
 using UnityEngine;
 using UnityEngine.Events;
@@ -27,7 +28,7 @@ public class RedDotTcpClient : MonoBehaviour
   [SerializeField] private UnityEvent _onGameOver = null;
 
   public static RedDotTcpClient Instance { get; set; }
-  
+
   private TcpClient _tcpClient = null;
 
   private void Start()
@@ -50,9 +51,9 @@ public class RedDotTcpClient : MonoBehaviour
 
   public void Connect()
   {
-    _tcpClient = new TcpClient();
     try
     {
+      _tcpClient = new TcpClient();
       _tcpClient.Connect(IPAddress.Parse(_ipInput.text), Constants.SERVER_PORT);
       _connectedButtonGroup.SetActive(true);
       _connectButton.SetActive(false);
@@ -64,6 +65,7 @@ public class RedDotTcpClient : MonoBehaviour
     }
     catch (Exception e)
     {
+      _tcpClient = null;
       _statusText.text = "Error, try again";
       Debug.Log(e);
     }
@@ -165,13 +167,7 @@ public class RedDotTcpClient : MonoBehaviour
         _onGameOver?.Invoke();
         break;
       case "UpdateBoard":
-        FillBoard(command.Payload.EnumerateArray().Select(je => new Dot
-        {
-          ID = je.GetProperty("ID").GetInt64(),
-          IsRed = je.GetProperty("IsRed").GetBoolean(),
-          X = je.GetProperty("X").GetSingle(),
-          Y = je.GetProperty("Y").GetSingle(),
-        }));    
+        FillBoard(command.Payload.EnumerateArray().Select(je => JsonSerializer.Deserialize<Dot>(je.GetRawText())));
         break;
       default:
         Debug.LogError($"Unknown command - {command.Action}");
@@ -196,7 +192,7 @@ public class RedDotTcpClient : MonoBehaviour
 
       var dotController = spawned.GetComponent<DotController>();
       dotController.IsRed = dot.IsRed;
-      dotController.ID = dot.ID;
+      dotController.ID = dot.Id;
     }
   }
 

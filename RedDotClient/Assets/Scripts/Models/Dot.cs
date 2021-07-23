@@ -11,6 +11,6 @@ namespace Assets.Scripts.Models
     public bool IsRed { get; set; }
     public float X { get; set; }
     public float Y { get; set; }
-    public long ID { get; set; }
+    public long Id { get; set; }
   }
 }

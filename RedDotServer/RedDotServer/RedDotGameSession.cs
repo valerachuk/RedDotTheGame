@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using RedDotServer.Models;
 
 namespace RedDotServer
 {
@@ -77,7 +78,7 @@ namespace RedDotServer
 
     public int RewardPoint(long id)
     {
-      var point = GameField.Find(pd => pd.ID == id);
+      var point = GameField.Find(pd => pd.Id == id);
       if (point == null) return 0;
       GameField.Remove(point);
       if (point.IsRed) return 1;
@@ -87,7 +88,7 @@ namespace RedDotServer
     public bool DeleteOldPoints()
     {
       var nowMs = ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
-      return GameField.RemoveAll(point => nowMs - point.ID > Constants.DOT_LIFETIME) > 0;
+      return GameField.RemoveAll(point => nowMs - point.Id > Constants.DOT_LIFETIME) > 0;
     }
   }
 }

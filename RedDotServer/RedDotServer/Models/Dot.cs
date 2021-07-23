@@ -1,17 +1,17 @@
 ﻿using System;
 
-namespace RedDotServer
+namespace RedDotServer.Models
 {
   public class Dot
   {
     public bool IsRed { get; set; }
     public float X { get; set; }
     public float Y { get; set; }
-    public long ID { get; set; }
+    public long Id { get; }
 
     public Dot()
     {
-      ID = ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
+      Id = ((DateTimeOffset)DateTime.Now).ToUnixTimeMilliseconds();
     }
   }
 }

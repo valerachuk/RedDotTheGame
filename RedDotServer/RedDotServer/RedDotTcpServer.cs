@@ -12,7 +12,7 @@ namespace RedDotServer
   class RedDotTcpServer
   {
     private readonly List<ClientInfo> _clients = new List<ClientInfo>();
-    private TcpListener _tcpListener = null;
+    private TcpListener _tcpListener;
 
     private readonly object _timerLock = new object();
 
@@ -26,14 +26,13 @@ namespace RedDotServer
     private void AcceptClient()
     {
       if (!_tcpListener.Pending()) return;
+
+      var client = _tcpListener.AcceptTcpClient();
+      Console.WriteLine($"Accepting client: {client.Client.RemoteEndPoint}");
+      _clients.Add(new ClientInfo
       {
-        var client = _tcpListener.AcceptTcpClient();
-        Console.WriteLine($"Accepting client: {client.Client.RemoteEndPoint}");
-        _clients.Add(new ClientInfo
-        {
-          TcpClient = client
-        });
-      }
+        TcpClient = client
+      });
     }
 
     private void ListenClients()
